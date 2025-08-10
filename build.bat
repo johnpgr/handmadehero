@@ -58,15 +58,17 @@ if not exist "%SDL3_LIB_DIR%\RelWithDebInfo\SDL3.lib" (
 )
 
 :: Compile GLAD as C first
-echo Compiling GLAD...
-clang -c -I"%GLAD_INCLUDE_DIR%" ^
-    -o "%BUILD_DIR%\glad.o" ^
-    "%GLAD_SRC_DIR%\glad.c" ^
-    -MD
+if not exist "%BUILD_DIR%\glad.o" (
+    echo Compiling GLAD...
+    clang -c -I"%GLAD_INCLUDE_DIR%" ^
+        -o "%BUILD_DIR%\glad.o" ^
+        "%GLAD_SRC_DIR%\glad.c" ^
+        -MD
 
-if errorlevel 1 (
-    echo GLAD compilation failed
-    exit /b 1
+    if errorlevel 1 (
+        echo GLAD compilation failed
+        exit /b 1
+    )
 )
 
 :: Compile the application
