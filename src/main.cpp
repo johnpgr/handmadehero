@@ -1,74 +1,63 @@
-#include <windows.h>
+#include <SDL3/SDL.h>
+#include <SDL3/SDL_main.h>
+#include <print>
+#include <stdint.h>
 
-LRESULT CALLBACK MainWindowCallback(HWND window, UINT msg, WPARAM w_param, LPARAM l_param) {
-    LRESULT result = 0;
+#define fn static
+#define global static
 
-    switch (msg) {
-        case WM_SIZE: {
-            OutputDebugStringA("WM_SIZE\n");
+typedef uint8_t u8;
+typedef uint16_t u16;
+typedef uint32_t u32;
+typedef uint64_t u64;
+typedef int8_t i8;
+typedef int16_t i16;
+typedef int32_t i32;
+typedef int64_t i64;
+typedef float f32;
+typedef double f64;
+typedef size_t usize;
+
+using std::println;
+
+global bool running;
+global SDL_Window* window;
+
+fn void handle_window_events() {
+    SDL_Event event;
+
+    while (SDL_PollEvent(&event)) {
+        switch (event.type) {
+        case SDL_EVENT_QUIT:
+            running = false;
             break;
-        }
-        case WM_DESTROY: {
-            OutputDebugStringA("WM_DESTROY\n");
+        case SDL_EVENT_KEY_DOWN:
+            switch (event.key.key) {
+            case SDLK_ESCAPE:
+                running = false;
+                break;
+            default:
+                break;
+            }
             break;
-        }
-        case WM_CLOSE: {
-            OutputDebugStringA("WM_CLOSE\n");
-            break;
-        }
-        case WM_ACTIVATEAPP: {
-            OutputDebugStringA("WM_ACTIVATEAPP\n");
-            break;
-        }
-        case WM_PAINT: {
-            PAINTSTRUCT paint;
-            HDC device_context = BeginPaint(window, &paint);
-            int x = paint.rcPaint.left;
-            int y = paint.rcPaint.top;
-            int height = paint.rcPaint.bottom - paint.rcPaint.top;
-            int width = paint.rcPaint.right - paint.rcPaint.left;
-            PatBlt(device_context, x, y, width, height, WHITENESS);
-            EndPaint(window, &paint);
-        }
-        default: {
-            OutputDebugStringA("Default\n");
-            result = DefWindowProc(window, msg, w_param, l_param);
+        default:
             break;
         }
     }
-
-    return result;
 }
 
-int CALLBACK WinMain(HINSTANCE instance, HINSTANCE prev_instance, LPSTR cmd_line, int show_code) {
-    WNDCLASS window = {
-        .lpfnWndProc = MainWindowCallback,
-        .hInstance = instance,
-        .lpszClassName = "HandmadeHerowindowClass",
-    };
-
-    if (!RegisterClass(&window)) {
-        OutputDebugStringA("Failed to register window class\n");
-        return 1;
+int main([[maybe_unused]] int argc, [[maybe_unused]] char* argv[]) {
+    if (!SDL_Init(SDL_INIT_VIDEO)) {
+        println("You've failed as a human being");
+        return -1;
     }
 
-    HWND window_handle = CreateWindowEx(0, window.lpszClassName, "Handmade Hero", WS_OVERLAPPEDWINDOW | WS_VISIBLE,
-                                        CW_USEDEFAULT, CW_USEDEFAULT, CW_USEDEFAULT, CW_USEDEFAULT, 0, 0, instance, 0);
+    window = SDL_CreateWindow("Handmade hero SDL3", 1280, 720, 0);
 
-    if (!window_handle) {
-        OutputDebugStringA("Failed to create window handle\n");
-        return 1;
-    }
+    running = true;
 
-    while (true) {
-        MSG message;
-        BOOL message_result = GetMessage(&message, 0, 0, 0);
-        if (message_result > 0) {
-            TranslateMessage(&message);
-            DispatchMessage(&message);
-        } else {
-            break;
-        }
+    while (running) {
+        handle_window_events();
     }
 
     return 0;

@@ -1,0 +1,8 @@
+-std=c++23
+-Ithirdparty/GLAD/include
+-Ithirdparty/SDL3/include
+-Wall
+-Wextra
+-Wpedantic
+-Wno-c23-extensions
+-Wno-language-extension-token 
