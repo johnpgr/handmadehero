@@ -75,6 +75,7 @@ if not exist "%BUILD_DIR%\glad.o" (
 echo Compiling application...
 
 clang++ -std=c++23 ^
+    -g ^
     -Wall ^
     -Wextra ^
     -Wpedantic ^
