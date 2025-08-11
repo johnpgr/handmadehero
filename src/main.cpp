@@ -22,13 +22,18 @@ typedef float f32;
 typedef double f64;
 typedef size_t usize;
 
+// Constants
+constexpr f32 SAMPLE_RATE = 44100.0;
+
 // Main application state
 global SDL_Window* window = nullptr;
 global SDL_Renderer* renderer = nullptr;
 global SDL_Texture* texture = nullptr;
 global SDL_Gamepad* gamepad = nullptr;
 global SDL_AudioStream* audio_stream = nullptr;
-global i32 current_sine_sample = 0;
+global f32 tone_hz = 440.0;
+global f32 tone_volume = 0.1;
+global f32 wave_period = 0.0;
 global i32 win_width = 1280;
 global i32 win_height = 720;
 global i32 texture_width = 0;
@@ -79,53 +84,85 @@ fn void render_weird_gradient(u32 blue_offset, u32 green_offset) {
     i32 bytes_per_pixel = 4;
     auto base = (u8*)pixels;
 
-    for (i32 y = 0; y < win_height; ++y) {
+    for (i32 y = 0; y < texture_height; ++y) {
         u8* row = base + y * pitch;
-        u8 g = (u8)((y + green_offset) & 0xFF);
 
-        for (i32 x = 0; x < win_width; ++x) {
-            u8 b = (u8)((x + blue_offset) & 0xFF);
-            u8* p = row + x * bytes_per_pixel;
-            p[0] = 0;
-            p[1] = g;
-            p[2] = b;
-            p[3] = 255;
+        for (i32 x = 0; x < texture_width; ++x) {
+            u8* pixel = row + x * bytes_per_pixel;
+
+            *pixel++ = 0;
+            *pixel++ = (u8)((y + green_offset) & 0xFF);
+            *pixel++ = (u8)((x + blue_offset) & 0xFF);
+            *pixel++ = 255;
         }
     }
 
     SDL_UnlockTexture(texture);
 }
 
-fn void handle_keyboard_input() {
+fn void handle_keyboard_input([[maybe_unused]] u64 current_time_ns) {
     const bool* keyboard_state = SDL_GetKeyboardState(nullptr);
 
     if (keyboard_state[SDL_SCANCODE_ESCAPE]) {
         running = false;
     }
 
-    // Example of other keyboard polling
     if (keyboard_state[SDL_SCANCODE_W]) {
-        // Move forward or whatever
+        tone_hz += 10.0f;
+        if (tone_hz > 2000.0f)
+            tone_hz = 2000.0f;
     }
 
     if (keyboard_state[SDL_SCANCODE_A]) {
-        // Move left
     }
 
     if (keyboard_state[SDL_SCANCODE_S]) {
-        // Move backward
+        tone_hz -= 10.0f;
+        if (tone_hz < 100.0f)
+            tone_hz = 100.0f;
     }
 
+
     if (keyboard_state[SDL_SCANCODE_D]) {
-        // Move right
     }
 
     if (keyboard_state[SDL_SCANCODE_SPACE]) {
-        // Jump or action
+    }
+
+    if(keyboard_state[SDL_SCANCODE_1]) {
+        tone_hz = 261.63f; // C4
+    }
+
+    if(keyboard_state[SDL_SCANCODE_2]) {
+        tone_hz = 293.66f; // D4
+    }
+
+    if(keyboard_state[SDL_SCANCODE_3]) {
+        tone_hz = 329.63f; // E4
+    }
+
+    if(keyboard_state[SDL_SCANCODE_4]) {
+        tone_hz = 349.23f; // F4
+    }
+
+    if(keyboard_state[SDL_SCANCODE_5]) {
+        tone_hz = 392.00f; // G4
+    }
+
+    if(keyboard_state[SDL_SCANCODE_6]) {
+        tone_hz = 440.00f; // A4
+    }
+
+    if(keyboard_state[SDL_SCANCODE_7]) {
+        tone_hz = 493.88f; // B4
+    }
+
+    if(keyboard_state[SDL_SCANCODE_M]) {
+        tone_volume = (tone_volume > 0.0f) ? 0.0f : 0.1f;
     }
 }
 
-fn void handle_controller_input() {
+fn void handle_controller_input([[maybe_unused]] u64 current_time_ns) {
     if (!controller_connected)
         return;
 
@@ -271,9 +308,9 @@ fn void handle_window_events([[maybe_unused]] u64 current_time_ns) {
     }
 }
 
-fn void handle_audio_stream() {
+fn void handle_audio_stream([[maybe_unused]] u64 current_time_ns) {
     // 8000 float samples per second. Half of that.
-    int min_audio = (8000 * sizeof(f32)) / 2;
+    i32 min_audio = (SAMPLE_RATE * sizeof(f32)) / 50;
 
     // See if we need to feed the audio stream more data yet.
     // We're being lazy here, but if there's less than half a second queued,
@@ -281,18 +318,26 @@ fn void handle_audio_stream() {
     // video games, you'll want to generate significantly _less_ audio ahead of
     // time!
     if (SDL_GetAudioStreamQueued(audio_stream) < min_audio) {
-        static f32 samples[512];
+        static f32 samples[128];
+
+        u32 sample_count = SDL_arraysize(samples);
 
         // Generate a 440hz pure tone
-        for (u64 i = 0; i < SDL_arraysize(samples); i++) {
-            int freq = 440;
-            f32 phase = current_sine_sample * freq / 8000.0f;
-            samples[i] = SDL_sinf(phase * 2 * SDL_PI_F);
-            current_sine_sample++;
-        }
+        for (u64 i = 0; i < sample_count; i++) {
+            f32 sine_value = SDL_sinf(wave_period * 2.0f * SDL_PI_F);
+            samples[i] = sine_value * tone_volume;
 
-        // Wrapping around to avoid floating-point errors
-        current_sine_sample %= 8000;
+            // Advance the wave period by the frequency step
+            // This is the key insight from Casey's explanation:
+            // Each sample advances the phase by (frequency / sample_rate)
+            wave_period += tone_hz / SAMPLE_RATE;
+
+            // Keep wave_period in a reasonable range to avoid floating point
+            // errors Since sine is periodic, we can wrap around at 1.0
+            if (wave_period >= 1.0f) {
+                wave_period -= 1.0f;
+            }
+        }
 
         SDL_PutAudioStreamData(audio_stream, samples, sizeof(samples));
     }
@@ -419,10 +464,11 @@ int main([[maybe_unused]] int argc, [[maybe_unused]] char* argv[]) {
 
     while (running) {
         u64 tick = SDL_GetTicksNS();
+
         handle_window_events(tick);
-        handle_keyboard_input();
-        handle_controller_input();
-        // handle_audio_stream();
+        handle_keyboard_input(tick);
+        handle_controller_input(tick);
+        handle_audio_stream(tick);
         render(tick);
     }
 
