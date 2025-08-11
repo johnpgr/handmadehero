@@ -11,7 +11,7 @@
 #define global static
 
 // Useful macros
-#define nanos_to_seconds(ns) ns / 1000000000.0f
+#define NANOS_TO_SECONDS(ns) ns / 1000000000.0f
 
 // Useful typedefs
 typedef uint8_t u8;
@@ -39,8 +39,9 @@ char fs_source[] = {
 global bool running = true;
 global SDL_Window* window = nullptr;
 global SDL_GLContext gl_context = nullptr;
-global i32 w_width = 1280;
-global i32 w_height = 720;
+global i32 win_width = 1280;
+global i32 win_height = 720;
+global bool win_focused = true;
 global SDL_Gamepad* gamepad = nullptr;
 global bool controller_connected = false;
 
@@ -130,41 +131,118 @@ fn void setup_quad() {
     glVertexArrayAttribBinding(vao, 0, 0);
 }
 
+fn void handle_keyboard_input() {
+    const bool* keyboard_state = SDL_GetKeyboardState(nullptr);
+    
+    if (keyboard_state[SDL_SCANCODE_ESCAPE]) {
+        running = false;
+    }
+    
+    // Example of other keyboard polling
+    if (keyboard_state[SDL_SCANCODE_W]) {
+        // Move forward or whatever
+    }
+    
+    if (keyboard_state[SDL_SCANCODE_A]) {
+        // Move left
+    }
+    
+    if (keyboard_state[SDL_SCANCODE_S]) {
+        // Move backward  
+    }
+    
+    if (keyboard_state[SDL_SCANCODE_D]) {
+        // Move right
+    }
+    
+    if (keyboard_state[SDL_SCANCODE_SPACE]) {
+        // Jump or action
+    }
+}
+
 fn void handle_controller_input() {
-    if (!controller_connected)
-        return;
-
+    if (!controller_connected) return;
+    
+    // Buttons (current state, not just pressed this frame)
     if (SDL_GetGamepadButton(gamepad, SDL_GAMEPAD_BUTTON_SOUTH)) {
-        SDL_Log("A Button is pressed");
+        // SDL_Log("A button is being held down");
     }
-
+    
     if (SDL_GetGamepadButton(gamepad, SDL_GAMEPAD_BUTTON_EAST)) {
-        SDL_Log("B Button is pressed");
+        // SDL_Log("B button is being held down");
     }
-
+    
     if (SDL_GetGamepadButton(gamepad, SDL_GAMEPAD_BUTTON_START)) {
         running = false;
     }
-
+    
+    // D-pad
+    if (SDL_GetGamepadButton(gamepad, SDL_GAMEPAD_BUTTON_DPAD_UP)) {
+        // SDL_Log("D-pad up");
+    }
+    
+    if (SDL_GetGamepadButton(gamepad, SDL_GAMEPAD_BUTTON_DPAD_DOWN)) {
+        // SDL_Log("D-pad down");
+    }
+    
+    if (SDL_GetGamepadButton(gamepad, SDL_GAMEPAD_BUTTON_DPAD_LEFT)) {
+        // SDL_Log("D-pad left");
+    }
+    
+    if (SDL_GetGamepadButton(gamepad, SDL_GAMEPAD_BUTTON_DPAD_RIGHT)) {
+        // SDL_Log("D-pad right");
+    }
+    
+    // Shoulder buttons
+    if (SDL_GetGamepadButton(gamepad, SDL_GAMEPAD_BUTTON_LEFT_SHOULDER)) {
+        // SDL_Log("Left bumper");
+    }
+    
+    if (SDL_GetGamepadButton(gamepad, SDL_GAMEPAD_BUTTON_RIGHT_SHOULDER)) {
+        // SDL_Log("Right bumper");
+    }
+    
+    // Analog sticks with deadzone
+    const i16 DEADZONE = 8000;
+    
+    // Left stick
     i16 left_x = SDL_GetGamepadAxis(gamepad, SDL_GAMEPAD_AXIS_LEFTX);
     i16 left_y = SDL_GetGamepadAxis(gamepad, SDL_GAMEPAD_AXIS_LEFTY);
-
-    constexpr i16 DEADZONE = 8000;
+    
     if (abs(left_x) > DEADZONE || abs(left_y) > DEADZONE) {
-        [[maybe_unused]] f32 norm_x = left_x / 32767.0f;
-        [[maybe_unused]] f32 norm_y = left_y / 32767.0f;
-        // TODO: Use these values
+        f32 norm_left_x = left_x / 32767.0f;
+        f32 norm_left_y = left_y / 32767.0f;
+        
+        // Use normalized values for player movement, camera, etc.
+        SDL_Log("Left stick: (%.2f, %.2f)", norm_left_x, norm_left_y);
     }
-
+    
+    // Right stick
+    i16 right_x = SDL_GetGamepadAxis(gamepad, SDL_GAMEPAD_AXIS_RIGHTX);
+    i16 right_y = SDL_GetGamepadAxis(gamepad, SDL_GAMEPAD_AXIS_RIGHTY);
+    
+    if (abs(right_x) > DEADZONE || abs(right_y) > DEADZONE) {
+        f32 norm_right_x = right_x / 32767.0f;
+        f32 norm_right_y = right_y / 32767.0f;
+        
+        // Use for camera control, aiming, etc.
+        SDL_Log("Right stick: (%.2f, %.2f)", norm_right_x, norm_right_y);
+    }
+    
+    // Triggers (0 to 32767)
     i16 left_trigger = SDL_GetGamepadAxis(gamepad, SDL_GAMEPAD_AXIS_LEFT_TRIGGER);
     i16 right_trigger = SDL_GetGamepadAxis(gamepad, SDL_GAMEPAD_AXIS_RIGHT_TRIGGER);
-
-    if (left_trigger > 16000) {
-        SDL_Log("Left trigger: %.2f", left_trigger / 32767.0f);
+    
+    const i16 TRIGGER_THRESHOLD = 4000;
+    
+    if (left_trigger > TRIGGER_THRESHOLD) {
+        [[maybe_unused]] f32 norm_left_trigger = left_trigger / 32767.0f;
+        // Use for analog actions like acceleration, zoom, etc.
     }
-
-    if (right_trigger > 16000) {
-        SDL_Log("Right trigger: %.2f", right_trigger / 32767.0f);
+    
+    if (right_trigger > TRIGGER_THRESHOLD) {
+        [[maybe_unused]] f32 norm_right_trigger = right_trigger / 32767.0f;
+        // Use for analog actions
     }
 }
 
@@ -173,61 +251,62 @@ fn void handle_window_events([[maybe_unused]] u64 current_time_ns) {
 
     while (SDL_PollEvent(&event)) {
         switch (event.type) {
-        case SDL_EVENT_QUIT:
-            running = false;
-            break;
-
-        case SDL_EVENT_WINDOW_RESIZED:
-            w_width = event.window.data1;
-            w_height = event.window.data2;
-            glViewport(0, 0, w_width, w_height);
-            break;
-
-        case SDL_EVENT_KEY_DOWN:
-            switch (event.key.key) {
-            case SDLK_ESCAPE:
+            case SDL_EVENT_QUIT: {
                 running = false;
                 break;
-            default:
+            }
+
+            case SDL_EVENT_WINDOW_RESIZED: {
+                win_width = event.window.data1;
+                win_height = event.window.data2;
+                glViewport(0, 0, win_width, win_height);
                 break;
             }
-            break;
 
-        case SDL_EVENT_GAMEPAD_ADDED:
-            if (!controller_connected) {
-                gamepad = SDL_OpenGamepad(event.gdevice.which);
-                if (gamepad) {
-                    controller_connected = true;
-                    const char* name = SDL_GetGamepadName(gamepad);
-                    SDL_Log("Controller connected: %s", name ? name : "Unknown");
+            case SDL_EVENT_WINDOW_FOCUS_LOST: {
+                win_focused = false;
+                break;
+            }
+
+            case SDL_EVENT_WINDOW_FOCUS_GAINED: {
+                win_focused = true;
+                break;
+            }
+
+            case SDL_EVENT_GAMEPAD_ADDED: {
+                if (!controller_connected) {
+                    gamepad = SDL_OpenGamepad(event.gdevice.which);
+                    if (gamepad) {
+                        controller_connected = true;
+                        const char* name = SDL_GetGamepadName(gamepad);
+                        SDL_Log("Controller connected: %s", name ? name : "Unknown");
+                    }
                 }
+                break;
             }
-            break;
 
-        case SDL_EVENT_GAMEPAD_REMOVED:
-            if (gamepad && event.gdevice.which == SDL_GetGamepadID(gamepad)) {
-                SDL_CloseGamepad(gamepad);
-                gamepad = nullptr;
-                controller_connected = false;
-                SDL_Log("Controller disconnected");
+            case SDL_EVENT_GAMEPAD_REMOVED: {
+                if (gamepad && event.gdevice.which == SDL_GetGamepadID(gamepad)) {
+                    SDL_CloseGamepad(gamepad);
+                    gamepad = nullptr;
+                    controller_connected = false;
+                    SDL_Log("Controller disconnected");
+                }
+                break;
             }
-            break;
-
-        default:
-            break;
         }
     }
-
 }
 
-
 fn void render(u64 current_time_ns) {
+    if(!win_focused) return;
+
     glClear(GL_COLOR_BUFFER_BIT);
     glUseProgram(shader_program);
 
-    f32 time = nanos_to_seconds(current_time_ns);
+    f32 time = NANOS_TO_SECONDS(current_time_ns);
     glUniform1f(time_uniform, time);
-    glUniform2f(resolution_uniform, (f32)w_width, (f32)w_height);
+    glUniform2f(resolution_uniform, (f32)win_width, (f32)win_height);
 
     glBindVertexArray(vao);
     glDrawElements(GL_TRIANGLES, 6, GL_UNSIGNED_INT, 0);
@@ -272,7 +351,7 @@ fn bool initialize() {
     SDL_GL_SetAttribute(SDL_GL_DOUBLEBUFFER, 1);
     SDL_GL_SetAttribute(SDL_GL_DEPTH_SIZE, 24);
 
-    window = SDL_CreateWindow("Handmade hero SDL3", w_width, w_height, SDL_WINDOW_OPENGL);
+    window = SDL_CreateWindow("Handmade hero SDL3", win_width, win_height, SDL_WINDOW_OPENGL);
     if (!window) {
         SDL_Log("Get a life.");
         return false;
@@ -298,7 +377,7 @@ fn bool initialize() {
         SDL_Log("Couldn't enable VSync");
     }
 
-    glViewport(0, 0, w_width, w_height);
+    glViewport(0, 0, win_width, win_height);
 
     shader_program = create_shader_program();
     if (shader_program == 0) {
@@ -348,6 +427,7 @@ int main([[maybe_unused]] int argc, [[maybe_unused]] char* argv[]) {
     while (running) {
         u64 tick = SDL_GetTicksNS();
         handle_window_events(tick);
+        handle_keyboard_input();
         handle_controller_input();
         render(tick);
     }
