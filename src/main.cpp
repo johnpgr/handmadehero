@@ -1,6 +1,3 @@
-#include "SDL3/SDL_events.h"
-#include "SDL3/SDL_gamepad.h"
-#include "SDL3/SDL_joystick.h"
 #include "glad/glad.h"
 #include <SDL3/SDL.h>
 #include <SDL3/SDL_main.h>
@@ -38,11 +35,13 @@ char fs_source[] = {
 // Main application state
 global bool running = true;
 global SDL_Window* window = nullptr;
-global SDL_GLContext gl_context = nullptr;
+global SDL_GLContextState* gl_context = nullptr;
+global SDL_AudioStream* audio_stream = nullptr;
+global SDL_Gamepad* gamepad = nullptr;
+global i32 current_sine_sample = 0;
 global i32 win_width = 1280;
 global i32 win_height = 720;
 global bool win_focused = true;
-global SDL_Gamepad* gamepad = nullptr;
 global bool controller_connected = false;
 
 // OpenGL objects
@@ -100,7 +99,7 @@ fn u32 create_shader_program() {
     return program;
 }
 
-fn void setup_quad() {
+fn void initialize_quad() {
     f32 vertices[] = {
         -1.0f, -1.0f, // bottom left
         1.0f,  -1.0f, // bottom right
@@ -298,6 +297,32 @@ fn void handle_window_events([[maybe_unused]] u64 current_time_ns) {
     }
 }
 
+fn void handle_audio_stream() {
+    // 8000 float samples per second. Half of that.
+    int min_audio = (8000 * sizeof(f32)) / 2;
+
+    // See if we need to feed the audio stream more data yet.
+    // We're being lazy here, but if there's less than half a second queued, generate more.
+    // A sine wave is unchanging audio--easy to stream--but for video games, you'll want
+    // to generate significantly _less_ audio ahead of time!
+    if(SDL_GetAudioStreamQueued(audio_stream) < min_audio) {
+        static f32 samples[512];
+
+        // Generate a 440hz pure tone
+        for (i32 i = 0; i < SDL_arraysize(samples); i++) {
+            int freq = 440;
+            f32 phase = current_sine_sample * freq / 8000.0f;
+            samples[i] = SDL_sinf(phase * 2 * SDL_PI_F);
+            current_sine_sample++;
+        }
+
+        // Wrapping around to avoid floating-point errors
+        current_sine_sample %= 8000;
+        
+        SDL_PutAudioStreamData(audio_stream, samples, sizeof(samples));
+    }
+}
+
 fn void render(u64 current_time_ns) {
     if(!win_focused) return;
 
@@ -339,8 +364,25 @@ fn void initialize_gamepad() {
     }
 }
 
+fn bool initialize_audio() {
+    SDL_AudioSpec spec;
+    spec.channels = 1;
+    spec.format = SDL_AUDIO_F32;
+    spec.freq = 8000;
+
+    audio_stream = SDL_OpenAudioDeviceStream(SDL_AUDIO_DEVICE_DEFAULT_PLAYBACK, &spec, nullptr, nullptr);
+    if(!audio_stream) {
+        SDL_Log("You will die in misery");
+        return false;
+    }
+
+    SDL_ResumeAudioStreamDevice(audio_stream);
+
+    return true;
+}
+
 fn bool initialize() {
-    if (!SDL_Init(SDL_INIT_VIDEO | SDL_INIT_GAMEPAD)) {
+    if (!SDL_Init(SDL_INIT_VIDEO | SDL_INIT_AUDIO | SDL_INIT_GAMEPAD)) {
         SDL_Log("You've failed as a human being.");
         return false;
     }
@@ -388,7 +430,8 @@ fn bool initialize() {
     time_uniform = glGetUniformLocation(shader_program, "uTime");
     resolution_uniform = glGetUniformLocation(shader_program, "uResolution");
 
-    setup_quad();
+    initialize_quad();
+    initialize_audio();
     initialize_gamepad();
 
     glClearColor(0.0f, 0.0f, 0.0f, 1.0f);
@@ -429,6 +472,7 @@ int main([[maybe_unused]] int argc, [[maybe_unused]] char* argv[]) {
         handle_window_events(tick);
         handle_keyboard_input();
         handle_controller_input();
+        handle_audio_stream();
         render(tick);
     }
 

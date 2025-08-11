@@ -100,8 +100,10 @@ if errorlevel 1 (
     exit /b 1
 )
 
-:: Copy SDL3.dll to build directory
-copy "%SDL3_LIB_DIR%\RelWithDebInfo\SDL3.dll" "%BUILD_DIR%\"
+if not exist "%BUILD_DIR%\SDL3.dll" (
+    :: Copy SDL3.dll to build directory
+    copy "%SDL3_LIB_DIR%\RelWithDebInfo\SDL3.dll" "%BUILD_DIR%\"
+)
 
 echo Build completed successfully!
 echo Executable: %BUILD_DIR%\main.exe
