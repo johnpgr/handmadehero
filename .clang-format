@@ -1,7 +1,11 @@
 BasedOnStyle: LLVM
-IndentWidth: 4
 Language: Cpp
+IndentWidth: 4
+ColumnLimit: 80
 DerivePointerAlignment: false
 PointerAlignment: Left
-ColumnLimit: 100
 IndentCaseLabels: true
+BinPackArguments: false
+BinPackParameters: false
+AlignAfterOpenBracket: BlockIndent
+AllowAllParametersOfDeclarationOnNextLine: false

@@ -1,5 +1,3 @@
-#include "SDL3/SDL_oldnames.h"
-#include "SDL3/SDL_render.h"
 #include <SDL3/SDL.h>
 #include <SDL3/SDL_main.h>
 #include <stdint.h>
@@ -27,14 +25,76 @@ typedef size_t usize;
 // Main application state
 global SDL_Window* window = nullptr;
 global SDL_Renderer* renderer = nullptr;
-global SDL_AudioStream* audio_stream = nullptr;
+global SDL_Texture* texture = nullptr;
 global SDL_Gamepad* gamepad = nullptr;
+global SDL_AudioStream* audio_stream = nullptr;
 global i32 current_sine_sample = 0;
 global i32 win_width = 1280;
 global i32 win_height = 720;
+global i32 texture_width = 0;
+global i32 texture_height = 0;
 global bool running = true;
 global bool win_focused = true;
 global bool controller_connected = false;
+
+fn bool resize_texture(i32 width, i32 height) {
+    if (texture) {
+        SDL_DestroyTexture(texture);
+        texture = nullptr;
+    }
+
+    texture_width = width;
+    texture_height = height;
+
+    texture = SDL_CreateTexture(
+        renderer,
+        SDL_PIXELFORMAT_RGBA32,
+        SDL_TEXTUREACCESS_STREAMING,
+        texture_width,
+        texture_height
+    );
+
+    if (!texture) {
+        SDL_Log("Your GPU is probably older than my grandmother's dentures.");
+        return false;
+    }
+
+    SDL_SetTextureScaleMode(texture, SDL_SCALEMODE_NEAREST);
+
+    return true;
+}
+
+fn void render_weird_gradient(u32 blue_offset, u32 green_offset) {
+    if (!texture)
+        return;
+
+    void* pixels = nullptr;
+    i32 pitch = 0;
+
+    if (!SDL_LockTexture(texture, nullptr, &pixels, &pitch)) {
+        SDL_Log("You are a failure. %s", SDL_GetError());
+        return;
+    }
+
+    i32 bytes_per_pixel = 4;
+    auto base = (u8*)pixels;
+
+    for (i32 y = 0; y < win_height; ++y) {
+        u8* row = base + y * pitch;
+        u8 g = (u8)((y + green_offset) & 0xFF);
+
+        for (i32 x = 0; x < win_width; ++x) {
+            u8 b = (u8)((x + blue_offset) & 0xFF);
+            u8* p = row + x * bytes_per_pixel;
+            p[0] = 0;
+            p[1] = g;
+            p[2] = b;
+            p[3] = 255;
+        }
+    }
+
+    SDL_UnlockTexture(texture);
+}
 
 fn void handle_keyboard_input() {
     const bool* keyboard_state = SDL_GetKeyboardState(nullptr);
@@ -136,8 +196,10 @@ fn void handle_controller_input() {
     }
 
     // Triggers (0 to 32767)
-    i16 left_trigger = SDL_GetGamepadAxis(gamepad, SDL_GAMEPAD_AXIS_LEFT_TRIGGER);
-    i16 right_trigger = SDL_GetGamepadAxis(gamepad, SDL_GAMEPAD_AXIS_RIGHT_TRIGGER);
+    i16 left_trigger =
+        SDL_GetGamepadAxis(gamepad, SDL_GAMEPAD_AXIS_LEFT_TRIGGER);
+    i16 right_trigger =
+        SDL_GetGamepadAxis(gamepad, SDL_GAMEPAD_AXIS_RIGHT_TRIGGER);
 
     const i16 TRIGGER_THRESHOLD = 4000;
 
@@ -166,11 +228,7 @@ fn void handle_window_events([[maybe_unused]] u64 current_time_ns) {
                 win_width = event.window.data1;
                 win_height = event.window.data2;
 
-                SDL_Rect rect;
-                rect.w = win_width;
-                rect.h = win_height;
-
-                SDL_SetRenderViewport(renderer, &rect);
+                resize_texture(win_width, win_height);
 
                 break;
             }
@@ -191,14 +249,17 @@ fn void handle_window_events([[maybe_unused]] u64 current_time_ns) {
                     if (gamepad) {
                         controller_connected = true;
                         const char* name = SDL_GetGamepadName(gamepad);
-                        SDL_Log("Controller connected: %s", name ? name : "Unknown");
+                        SDL_Log(
+                            "Controller connected: %s", name ? name : "Unknown"
+                        );
                     }
                 }
                 break;
             }
 
             case SDL_EVENT_GAMEPAD_REMOVED: {
-                if (gamepad && event.gdevice.which == SDL_GetGamepadID(gamepad)) {
+                if (gamepad &&
+                    event.gdevice.which == SDL_GetGamepadID(gamepad)) {
                     SDL_CloseGamepad(gamepad);
                     gamepad = nullptr;
                     controller_connected = false;
@@ -215,9 +276,10 @@ fn void handle_audio_stream() {
     int min_audio = (8000 * sizeof(f32)) / 2;
 
     // See if we need to feed the audio stream more data yet.
-    // We're being lazy here, but if there's less than half a second queued, generate more.
-    // A sine wave is unchanging audio--easy to stream--but for video games, you'll want
-    // to generate significantly _less_ audio ahead of time!
+    // We're being lazy here, but if there's less than half a second queued,
+    // generate more. A sine wave is unchanging audio--easy to stream--but for
+    // video games, you'll want to generate significantly _less_ audio ahead of
+    // time!
     if (SDL_GetAudioStreamQueued(audio_stream) < min_audio) {
         static f32 samples[512];
 
@@ -240,7 +302,19 @@ fn void render([[maybe_unused]] u64 current_time_ns) {
     if (!win_focused)
         return;
 
+    static u32 blue_offset = 0;
+    static u32 green_offset = 0;
+
+    blue_offset += 1;
+    green_offset += 1;
+
+    render_weird_gradient(blue_offset, green_offset);
+
+    SDL_SetRenderDrawColor(renderer, 0, 0, 0, 255);
     SDL_RenderClear(renderer);
+    if (texture) {
+        SDL_RenderTexture(renderer, texture, nullptr, nullptr);
+    }
     SDL_RenderPresent(renderer);
 }
 
@@ -255,7 +329,9 @@ fn void initialize_gamepad() {
                 if (gamepad) {
                     controller_connected = true;
                     const char* name = SDL_GetGamepadName(gamepad);
-                    SDL_Log("Controller connected: %s", name ? name : "Unknown");
+                    SDL_Log(
+                        "Controller connected: %s", name ? name : "Unknown"
+                    );
                     break;
                 }
             }
@@ -274,8 +350,9 @@ fn bool initialize_audio() {
     spec.format = SDL_AUDIO_F32;
     spec.freq = 8000;
 
-    audio_stream =
-        SDL_OpenAudioDeviceStream(SDL_AUDIO_DEVICE_DEFAULT_PLAYBACK, &spec, nullptr, nullptr);
+    audio_stream = SDL_OpenAudioDeviceStream(
+        SDL_AUDIO_DEVICE_DEFAULT_PLAYBACK, &spec, nullptr, nullptr
+    );
     if (!audio_stream) {
         SDL_Log("You will die in misery");
         return false;
@@ -292,7 +369,9 @@ fn bool initialize() {
         return false;
     }
 
-    window = SDL_CreateWindow("Handmade hero SDL3", win_width, win_height, SDL_WINDOW_OPENGL);
+    window = SDL_CreateWindow(
+        "Handmade hero SDL3", win_width, win_height, SDL_WINDOW_RESIZABLE
+    );
     if (!window) {
         SDL_Log("Get a life.");
         return false;
@@ -301,6 +380,10 @@ fn bool initialize() {
     renderer = SDL_CreateRenderer(window, nullptr);
     if (!renderer) {
         SDL_Log("It's over for you");
+        return false;
+    }
+
+    if (!resize_texture(win_width, win_height)) {
         return false;
     }
 
@@ -316,6 +399,9 @@ fn void shutdown() {
     }
     if (gamepad) {
         SDL_CloseGamepad(gamepad);
+    }
+    if (texture) {
+        SDL_DestroyTexture(texture);
     }
     if (window) {
         SDL_DestroyWindow(window);
@@ -336,7 +422,7 @@ int main([[maybe_unused]] int argc, [[maybe_unused]] char* argv[]) {
         handle_window_events(tick);
         handle_keyboard_input();
         handle_controller_input();
-        handle_audio_stream();
+        // handle_audio_stream();
         render(tick);
     }
 
