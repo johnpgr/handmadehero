@@ -2,10 +2,6 @@
 #include <SDL3/SDL_main.h>
 #include <stdint.h>
 
-// Useful redefines
-#define fn static
-#define global static
-
 // Useful macros
 #define NANOS_TO_SECONDS(ns) ns / 1000000000.0f
 
@@ -24,25 +20,27 @@ typedef size_t usize;
 
 // Constants
 constexpr f32 SAMPLE_RATE = 44100.0;
+constexpr i16 TRIGGER_THRESHOLD = 4000;
+constexpr i16 DEADZONE = 8000;
 
 // Main application state
-global SDL_Window* window = nullptr;
-global SDL_Renderer* renderer = nullptr;
-global SDL_Texture* texture = nullptr;
-global SDL_Gamepad* gamepad = nullptr;
-global SDL_AudioStream* audio_stream = nullptr;
-global f32 tone_hz = 440.0;
-global f32 tone_volume = 0.1;
-global f32 wave_period = 0.0;
-global i32 win_width = 1280;
-global i32 win_height = 720;
-global i32 texture_width = 0;
-global i32 texture_height = 0;
-global bool running = true;
-global bool win_focused = true;
-global bool controller_connected = false;
+static SDL_Window* window = nullptr;
+static SDL_Renderer* renderer = nullptr;
+static SDL_Texture* texture = nullptr;
+static SDL_Gamepad* gamepad = nullptr;
+static SDL_AudioStream* audio_stream = nullptr;
+static f32 tone_hz = 440.0;
+static f32 tone_volume = 0.1;
+static f32 wave_period = 0.0;
+static i32 win_width = 1280;
+static i32 win_height = 720;
+static i32 texture_width = 0;
+static i32 texture_height = 0;
+static bool running = true;
+static bool win_focused = true;
+static bool controller_connected = false;
 
-fn bool resize_texture(i32 width, i32 height) {
+static bool resize_texture(i32 width, i32 height) {
     if (texture) {
         SDL_DestroyTexture(texture);
         texture = nullptr;
@@ -69,7 +67,7 @@ fn bool resize_texture(i32 width, i32 height) {
     return true;
 }
 
-fn void render_weird_gradient(u32 blue_offset, u32 green_offset) {
+static void render_weird_gradient(u32 blue_offset, u32 green_offset) {
     if (!texture)
         return;
 
@@ -100,7 +98,7 @@ fn void render_weird_gradient(u32 blue_offset, u32 green_offset) {
     SDL_UnlockTexture(texture);
 }
 
-fn void handle_keyboard_input([[maybe_unused]] u64 current_time_ns) {
+static void handle_keyboard_input([[maybe_unused]] u64 current_time_ns) {
     const bool* keyboard_state = SDL_GetKeyboardState(nullptr);
 
     if (keyboard_state[SDL_SCANCODE_ESCAPE]) {
@@ -162,7 +160,7 @@ fn void handle_keyboard_input([[maybe_unused]] u64 current_time_ns) {
     }
 }
 
-fn void handle_controller_input([[maybe_unused]] u64 current_time_ns) {
+static void handle_controller_input([[maybe_unused]] u64 current_time_ns) {
     if (!controller_connected)
         return;
 
@@ -205,9 +203,6 @@ fn void handle_controller_input([[maybe_unused]] u64 current_time_ns) {
         // SDL_Log("Right bumper");
     }
 
-    // Analog sticks with deadzone
-    const i16 DEADZONE = 8000;
-
     // Left stick
     i16 left_x = SDL_GetGamepadAxis(gamepad, SDL_GAMEPAD_AXIS_LEFTX);
     i16 left_y = SDL_GetGamepadAxis(gamepad, SDL_GAMEPAD_AXIS_LEFTY);
@@ -238,8 +233,6 @@ fn void handle_controller_input([[maybe_unused]] u64 current_time_ns) {
     i16 right_trigger =
         SDL_GetGamepadAxis(gamepad, SDL_GAMEPAD_AXIS_RIGHT_TRIGGER);
 
-    const i16 TRIGGER_THRESHOLD = 4000;
-
     if (left_trigger > TRIGGER_THRESHOLD) {
         [[maybe_unused]] f32 norm_left_trigger = left_trigger / 32767.0f;
         // Use for analog actions like acceleration, zoom, etc.
@@ -251,7 +244,7 @@ fn void handle_controller_input([[maybe_unused]] u64 current_time_ns) {
     }
 }
 
-fn void handle_window_events([[maybe_unused]] u64 current_time_ns) {
+static void handle_window_events([[maybe_unused]] u64 current_time_ns) {
     SDL_Event event;
 
     while (SDL_PollEvent(&event)) {
@@ -286,9 +279,7 @@ fn void handle_window_events([[maybe_unused]] u64 current_time_ns) {
                     if (gamepad) {
                         controller_connected = true;
                         const char* name = SDL_GetGamepadName(gamepad);
-                        SDL_Log(
-                            "Controller connected: %s", name ? name : "Unknown"
-                        );
+                        SDL_Log( "Controller connected: %s", name ? name : "Unknown");
                     }
                 }
                 break;
@@ -308,7 +299,7 @@ fn void handle_window_events([[maybe_unused]] u64 current_time_ns) {
     }
 }
 
-fn void handle_audio_stream([[maybe_unused]] u64 current_time_ns) {
+static void handle_audio_stream([[maybe_unused]] u64 current_time_ns) {
     // 8000 float samples per second. Half of that.
     i32 min_audio = (SAMPLE_RATE * sizeof(f32)) / 50;
 
@@ -343,7 +334,7 @@ fn void handle_audio_stream([[maybe_unused]] u64 current_time_ns) {
     }
 }
 
-fn void render([[maybe_unused]] u64 current_time_ns) {
+static void render([[maybe_unused]] u64 current_time_ns) {
     if (!win_focused)
         return;
 
@@ -363,7 +354,7 @@ fn void render([[maybe_unused]] u64 current_time_ns) {
     SDL_RenderPresent(renderer);
 }
 
-fn void initialize_gamepad() {
+static void initialize_gamepad() {
     i32 n_joysticks;
     SDL_JoystickID* joysticks = SDL_GetJoysticks(&n_joysticks);
 
@@ -389,11 +380,11 @@ fn void initialize_gamepad() {
     }
 }
 
-fn bool initialize_audio() {
+static bool initialize_audio() {
     SDL_AudioSpec spec;
     spec.channels = 1;
     spec.format = SDL_AUDIO_F32;
-    spec.freq = 8000;
+    spec.freq = SAMPLE_RATE;
 
     audio_stream = SDL_OpenAudioDeviceStream(
         SDL_AUDIO_DEVICE_DEFAULT_PLAYBACK, &spec, nullptr, nullptr
@@ -408,7 +399,7 @@ fn bool initialize_audio() {
     return true;
 }
 
-fn bool initialize() {
+static bool initialize() {
     if (!SDL_Init(SDL_INIT_VIDEO | SDL_INIT_AUDIO | SDL_INIT_GAMEPAD)) {
         SDL_Log("You've failed as a human being.");
         return false;
@@ -418,13 +409,13 @@ fn bool initialize() {
         "Handmade hero SDL3", win_width, win_height, SDL_WINDOW_RESIZABLE
     );
     if (!window) {
-        SDL_Log("Get a life.");
+        SDL_Log("Congratulations, you've achieved the impossible: making a window more elusive than your life goals.");
         return false;
     }
 
     renderer = SDL_CreateRenderer(window, nullptr);
     if (!renderer) {
-        SDL_Log("It's over for you");
+        SDL_Log("Your renderer died faster than your hopes and dreams.");
         return false;
     }
 
@@ -438,7 +429,7 @@ fn bool initialize() {
     return true;
 }
 
-fn void shutdown() {
+static void shutdown() {
     if (audio_stream) {
         SDL_DestroyAudioStream(audio_stream);
     }
