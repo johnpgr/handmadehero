@@ -15,6 +15,7 @@ echo "Compiling application..."
 
 # Compile the application using system SDL3
 clang++ -std=c++23 \
+    -g \
     -Wall \
     -Wextra \
     -Wpedantic \

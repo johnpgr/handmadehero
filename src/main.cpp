@@ -4,7 +4,7 @@
 #include <math.h>
 
 // Constants
-constexpr f32 SAMPLE_RATE = 44100.0;
+constexpr f32 SAMPLE_RATE = 48000.0;
 constexpr i16 TRIGGER_THRESHOLD = 4000;
 constexpr i16 DEADZONE = 8000;
 
@@ -36,7 +36,7 @@ static bool resize_texture(i32 width, i32 height) {
 
     texture = SDL_CreateTexture(
         renderer,
-        SDL_PIXELFORMAT_RGBA32,
+        SDL_PIXELFORMAT_BGRX32,
         SDL_TEXTUREACCESS_STREAMING,
         texture_width,
         texture_height
@@ -64,26 +64,25 @@ static void render_weird_gradient(u32 blue_offset, u32 green_offset) {
         return;
     }
 
-    i32 bytes_per_pixel = 4;
-    auto base = (u8*)pixels;
+    u8* row = (u8*)pixels;
 
     for (i32 y = 0; y < texture_height; ++y) {
-        u8* row = base + y * pitch;
+        u32* pixel = (u32*)row;
 
         for (i32 x = 0; x < texture_width; ++x) {
-            u8* pixel = row + x * bytes_per_pixel;
+            u8 blue = (x + blue_offset);
+            u8 green = (y + green_offset);
 
-            *pixel++ = 0;
-            *pixel++ = (u8)((y + green_offset) & 0xFF);
-            *pixel++ = (u8)((x + blue_offset) & 0xFF);
-            *pixel++ = 255;
+            *pixel++ = ((green << 8) | blue);
         }
+
+        row += pitch;
     }
 
     SDL_UnlockTexture(texture);
 }
 
-static void handle_keyboard_input([[maybe_unused]] u64 current_time_ns) {
+static void handle_keyboard_input() {
     const bool* keyboard_state = SDL_GetKeyboardState(nullptr);
 
     if (keyboard_state[SDL_SCANCODE_ESCAPE]) {
@@ -140,11 +139,14 @@ static void handle_keyboard_input([[maybe_unused]] u64 current_time_ns) {
     }
 
     if (keyboard_state[SDL_SCANCODE_M]) {
-        tone_volume = (tone_volume > 0.0f) ? 0.0f : 0.1f;
+        tone_volume = 0.0;
+    }
+    if (keyboard_state[SDL_SCANCODE_U]) {
+        tone_volume = 0.1;
     }
 }
 
-static void handle_controller_input([[maybe_unused]] u64 current_time_ns) {
+static void handle_controller_input() {
     if (!controller_connected)
         return;
 
@@ -228,7 +230,7 @@ static void handle_controller_input([[maybe_unused]] u64 current_time_ns) {
     }
 }
 
-static void handle_window_events([[maybe_unused]] u64 current_time_ns) {
+static void handle_window_events() {
     SDL_Event event;
 
     while (SDL_PollEvent(&event)) {
@@ -286,22 +288,25 @@ static void handle_window_events([[maybe_unused]] u64 current_time_ns) {
     }
 }
 
-static void handle_audio_stream([[maybe_unused]] u64 current_time_ns) {
-    // 8000 float samples per second. Half of that.
-    i32 min_audio = (SAMPLE_RATE * sizeof(f32)) / 50;
+static void handle_audio_stream() {
+    if (!audio_stream)
+        return;
+
+    // Target ~100 ms of queued audio to avoid underruns.
+    constexpr f32 TARGET_SECONDS = 0.10;
+    i32 target_bytes = (i32)(SAMPLE_RATE * sizeof(f32) * TARGET_SECONDS);
+
+    static f32 samples[512];
+    u32 sample_count = SDL_arraysize(samples);
 
     // See if we need to feed the audio stream more data yet.
     // We're being lazy here, but if there's less than half a second queued,
     // generate more. A sine wave is unchanging audio--easy to stream--but for
     // video games, you'll want to generate significantly _less_ audio ahead of
     // time!
-    if (SDL_GetAudioStreamQueued(audio_stream) < min_audio) {
-        static f32 samples[128];
-
-        u32 sample_count = SDL_arraysize(samples);
-
+    if (SDL_GetAudioStreamQueued(audio_stream) < target_bytes) {
         // Generate a 440hz pure tone
-        for (u64 i = 0; i < sample_count; i++) {
+        for (u32 i = 0; i < sample_count; i++) {
             f32 sine_value = SDL_sinf(wave_period * 2.0f * SDL_PI_F);
             samples[i] = sine_value * tone_volume;
 
@@ -321,7 +326,7 @@ static void handle_audio_stream([[maybe_unused]] u64 current_time_ns) {
     }
 }
 
-static void render([[maybe_unused]] u64 current_time_ns) {
+static void render() {
     if (!win_focused)
         return;
 
@@ -369,9 +374,9 @@ static void initialize_gamepad() {
 }
 
 static bool initialize_audio() {
-    SDL_AudioSpec spec;
-    spec.channels = 1;
+    SDL_AudioSpec spec = {};
     spec.format = SDL_AUDIO_F32;
+    spec.channels = 1;
     spec.freq = SAMPLE_RATE;
 
     audio_stream = SDL_OpenAudioDeviceStream(
@@ -396,23 +401,17 @@ static bool initialize() {
         return false;
     }
 
-    window = SDL_CreateWindow(
+    SDL_CreateWindowAndRenderer(
         "Handmade hero SDL3",
         win_width,
         win_height,
-        SDL_WINDOW_RESIZABLE
+        SDL_WINDOW_RESIZABLE,
+        &window,
+        &renderer
     );
-    if (!window) {
-        SDL_Log(
-            "Congratulations, you've achieved the impossible: making a window "
-            "more elusive than your life goals."
-        );
-        return false;
-    }
 
-    renderer = SDL_CreateRenderer(window, nullptr);
-    if (!renderer) {
-        SDL_Log("Your renderer died faster than your hopes and dreams.");
+    if (!window || !renderer) {
+        SDL_Log("Maybe you should buy a new computer.");
         return false;
     }
 
@@ -456,13 +455,35 @@ int main([[maybe_unused]] int argc, [[maybe_unused]] char* argv[]) {
     defer { shutdown(); };
 
     while (running) {
-        u64 tick = SDL_GetTicksNS();
+        u64 frame_start_ns = SDL_GetTicksNS();
 
-        handle_window_events(tick);
-        handle_keyboard_input(tick);
-        handle_controller_input(tick);
-        handle_audio_stream(tick);
-        render(tick);
+        handle_window_events();
+        handle_keyboard_input();
+        handle_controller_input();
+        handle_audio_stream();
+        render();
+
+        u64 frame_end_ns = SDL_GetTicksNS();
+        u64 frame_ns = frame_end_ns - frame_start_ns;
+        static u64 acc_ns = 0;
+        static u32 acc_frames = 0;
+        acc_ns += frame_ns;
+        acc_frames++;
+
+        if (acc_ns >= 1'000'000'000ULL) {
+            f32 avg_ms = (f32)acc_ns / acc_frames / 1'000'000.0f;
+            f32 avg_fps = (f32)acc_frames * 1'000'000'000.0f / (f32)acc_ns;
+
+            SDL_Log(
+                "Avg over %u frames: %.2f ms (%.2f FPS)",
+                acc_frames,
+                avg_ms,
+                avg_fps
+            );
+
+            acc_ns = 0;
+            acc_frames = 0;
+        }
     }
 
     return 0;
