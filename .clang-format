@@ -9,3 +9,5 @@ BinPackArguments: false
 BinPackParameters: false
 AlignAfterOpenBracket: BlockIndent
 AllowAllParametersOfDeclarationOnNextLine: false
+AllowAllArgumentsOnNextLine: false
+AllowShortIfStatementsOnASingleLine: WithoutElse
