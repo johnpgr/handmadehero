@@ -1,5 +1,4 @@
 #include "main.h"
-#include "SDL3/SDL_render.h"
 #include "core.h"
 #include <SDL3/SDL.h>
 #include <SDL3/SDL_main.h>
@@ -467,7 +466,17 @@ int main([[maybe_unused]] int argc, [[maybe_unused]] char* argv[]) {
     auto persistent_storage = FixedBufferAllocator::create(MB(64));
     defer { persistent_storage.destroy(); };
 
+    auto transient_storage = FixedBufferAllocator::create(MB(64));
+    defer { transient_storage.destroy(); };
+
     auto state = persistent_storage.alloc_initialized<GameState>();
+
+    auto read_result = read_entire_file("test.txt", transient_storage);
+    if (!read_result) {
+        SDL_Log("Can't read test.txt");
+    } else {
+        SDL_Log("%.*s", (int)read_result->size, read_result->data);
+    }
 
     while (game.running) {
         u64 frame_start_ns = SDL_GetTicksNS();
