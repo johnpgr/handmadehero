@@ -1,22 +1,7 @@
+#include "core.h"
 #include <SDL3/SDL.h>
 #include <SDL3/SDL_main.h>
-#include <stdint.h>
-
-// Useful macros
-#define NANOS_TO_SECONDS(ns) ns / 1000000000.0f
-
-// Useful typedefs
-typedef uint8_t u8;
-typedef uint16_t u16;
-typedef uint32_t u32;
-typedef uint64_t u64;
-typedef int8_t i8;
-typedef int16_t i16;
-typedef int32_t i32;
-typedef int64_t i64;
-typedef float f32;
-typedef double f64;
-typedef size_t usize;
+#include <math.h>
 
 // Constants
 constexpr f32 SAMPLE_RATE = 44100.0;
@@ -120,42 +105,41 @@ static void handle_keyboard_input([[maybe_unused]] u64 current_time_ns) {
             tone_hz = 100.0f;
     }
 
-
     if (keyboard_state[SDL_SCANCODE_D]) {
     }
 
     if (keyboard_state[SDL_SCANCODE_SPACE]) {
     }
 
-    if(keyboard_state[SDL_SCANCODE_1]) {
+    if (keyboard_state[SDL_SCANCODE_1]) {
         tone_hz = 261.63f; // C4
     }
 
-    if(keyboard_state[SDL_SCANCODE_2]) {
+    if (keyboard_state[SDL_SCANCODE_2]) {
         tone_hz = 293.66f; // D4
     }
 
-    if(keyboard_state[SDL_SCANCODE_3]) {
+    if (keyboard_state[SDL_SCANCODE_3]) {
         tone_hz = 329.63f; // E4
     }
 
-    if(keyboard_state[SDL_SCANCODE_4]) {
+    if (keyboard_state[SDL_SCANCODE_4]) {
         tone_hz = 349.23f; // F4
     }
 
-    if(keyboard_state[SDL_SCANCODE_5]) {
+    if (keyboard_state[SDL_SCANCODE_5]) {
         tone_hz = 392.00f; // G4
     }
 
-    if(keyboard_state[SDL_SCANCODE_6]) {
+    if (keyboard_state[SDL_SCANCODE_6]) {
         tone_hz = 440.00f; // A4
     }
 
-    if(keyboard_state[SDL_SCANCODE_7]) {
+    if (keyboard_state[SDL_SCANCODE_7]) {
         tone_hz = 493.88f; // B4
     }
 
-    if(keyboard_state[SDL_SCANCODE_M]) {
+    if (keyboard_state[SDL_SCANCODE_M]) {
         tone_volume = (tone_volume > 0.0f) ? 0.0f : 0.1f;
     }
 }
@@ -279,7 +263,10 @@ static void handle_window_events([[maybe_unused]] u64 current_time_ns) {
                     if (gamepad) {
                         controller_connected = true;
                         const char* name = SDL_GetGamepadName(gamepad);
-                        SDL_Log( "Controller connected: %s", name ? name : "Unknown");
+                        SDL_Log(
+                            "Controller connected: %s",
+                            name ? name : "Unknown"
+                        );
                     }
                 }
                 break;
@@ -366,7 +353,8 @@ static void initialize_gamepad() {
                     controller_connected = true;
                     const char* name = SDL_GetGamepadName(gamepad);
                     SDL_Log(
-                        "Controller connected: %s", name ? name : "Unknown"
+                        "Controller connected: %s",
+                        name ? name : "Unknown"
                     );
                     break;
                 }
@@ -387,7 +375,10 @@ static bool initialize_audio() {
     spec.freq = SAMPLE_RATE;
 
     audio_stream = SDL_OpenAudioDeviceStream(
-        SDL_AUDIO_DEVICE_DEFAULT_PLAYBACK, &spec, nullptr, nullptr
+        SDL_AUDIO_DEVICE_DEFAULT_PLAYBACK,
+        &spec,
+        nullptr,
+        nullptr
     );
     if (!audio_stream) {
         SDL_Log("You will die in misery");
@@ -406,10 +397,16 @@ static bool initialize() {
     }
 
     window = SDL_CreateWindow(
-        "Handmade hero SDL3", win_width, win_height, SDL_WINDOW_RESIZABLE
+        "Handmade hero SDL3",
+        win_width,
+        win_height,
+        SDL_WINDOW_RESIZABLE
     );
     if (!window) {
-        SDL_Log("Congratulations, you've achieved the impossible: making a window more elusive than your life goals.");
+        SDL_Log(
+            "Congratulations, you've achieved the impossible: making a window "
+            "more elusive than your life goals."
+        );
         return false;
     }
 
@@ -430,6 +427,8 @@ static bool initialize() {
 }
 
 static void shutdown() {
+    SDL_Log("Running shutdown logic");
+
     if (audio_stream) {
         SDL_DestroyAudioStream(audio_stream);
     }
@@ -445,6 +444,7 @@ static void shutdown() {
     if (renderer) {
         SDL_DestroyRenderer(renderer);
     }
+
     SDL_Quit();
 }
 
@@ -452,6 +452,8 @@ int main([[maybe_unused]] int argc, [[maybe_unused]] char* argv[]) {
     if (!initialize()) {
         return -1;
     }
+
+    defer { shutdown(); };
 
     while (running) {
         u64 tick = SDL_GetTicksNS();
@@ -462,8 +464,6 @@ int main([[maybe_unused]] int argc, [[maybe_unused]] char* argv[]) {
         handle_audio_stream(tick);
         render(tick);
     }
-
-    shutdown();
 
     return 0;
 }
