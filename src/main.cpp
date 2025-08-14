@@ -1,12 +1,39 @@
-#include "main.h"
 #include "core.h"
 #include <SDL3/SDL.h>
 #include <SDL3/SDL_main.h>
-#include <math.h>
 
 constexpr f32 SAMPLE_RATE = 48000.0;
 constexpr i16 TRIGGER_THRESHOLD = 4000;
 constexpr i16 DEADZONE = 8000;
+
+struct GameInput {
+    SDL_Gamepad* gamepad = nullptr;
+    bool controller_connected = false;
+};
+
+struct GameSound {
+    SDL_AudioStream* audio_stream = nullptr;
+    f32 tone_volume = 0.1;
+    f32 wave_period = 0.0;
+};
+
+struct Game {
+    SDL_Window* window = nullptr;
+    SDL_Renderer* renderer = nullptr;
+    SDL_Texture* texture = nullptr;
+    GameInput input = {};
+    GameSound sound = {};
+    i32 win_width = 1280;
+    i32 win_height = 720;
+    bool win_focused = true;
+    bool running = true;
+};
+
+struct GameState {
+    i32 blue_offset = 0;
+    i32 green_offset = 0;
+    f32 tone_hz = 440.0;
+};
 
 static Game game = {};
 
@@ -470,13 +497,6 @@ int main([[maybe_unused]] int argc, [[maybe_unused]] char* argv[]) {
     defer { transient_storage.destroy(); };
 
     auto state = persistent_storage.alloc_initialized<GameState>();
-
-    auto read_result = read_entire_file("test.txt", transient_storage);
-    if (!read_result) {
-        SDL_Log("Can't read test.txt");
-    } else {
-        SDL_Log("%.*s", (int)read_result->size, read_result->data);
-    }
 
     while (game.running) {
         u64 frame_start_ns = SDL_GetTicksNS();
