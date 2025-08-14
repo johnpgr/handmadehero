@@ -3,7 +3,10 @@
 -Wextra
 -Wpedantic
 -Wno-c23-extensions
+-Wno-gnu-anonymous-struct
+-Wno-nested-anon-types
 -Wno-language-extension-token 
+-Wno-keyword-macro
 -I/usr/local/include
 -L/usr/local/lib -Wl,-rpath,/usr/local/lib -lSDL3
 -L/usr/local/lib

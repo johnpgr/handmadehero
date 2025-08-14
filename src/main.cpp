@@ -1,77 +1,161 @@
 #include "core.h"
-#include <SDL3/SDL.h>
-#include <SDL3/SDL_main.h>
-#include <math.h>
 
-// Constants
+constexpr f32 STEP_SIZE = 1.0f;
 constexpr f32 SAMPLE_RATE = 48000.0;
-constexpr i16 TRIGGER_THRESHOLD = 4000;
 constexpr i16 DEADZONE = 8000;
+constexpr u8 TONES_LEN = 7;
+constexpr f32 TONES[TONES_LEN] = {
+    261.63f,
+    293.66f,
+    329.63f,
+    349.23f,
+    392.00f,
+    440.00f,
+    493.88f,
+};
 
-// Main application state
-static SDL_Window* window = nullptr;
-static SDL_Renderer* renderer = nullptr;
-static SDL_Texture* texture = nullptr;
-static SDL_Gamepad* gamepad = nullptr;
-static SDL_AudioStream* audio_stream = nullptr;
-static f32 tone_hz = 440.0;
-static f32 tone_volume = 0.1;
-static f32 wave_period = 0.0;
-static i32 win_width = 1280;
-static i32 win_height = 720;
-static i32 texture_width = 0;
-static i32 texture_height = 0;
-static bool running = true;
-static bool win_focused = true;
-static bool controller_connected = false;
+struct ButtonState {
+    bool ended_down = false;
+    bool half_transition_count = false;
 
-static bool resize_texture(i32 width, i32 height) {
-    if (texture) {
-        SDL_DestroyTexture(texture);
-        texture = nullptr;
+    ButtonState() = default;
+
+    fn was_pressed() -> bool { return ended_down && half_transition_count; }
+
+    fn was_released() -> bool { return !ended_down && half_transition_count; }
+
+    fn process_button_state(ButtonState* prev_state, bool is_down) -> void {
+        ended_down = is_down;
+        half_transition_count =
+            (prev_state->ended_down != ended_down) ? true : false;
+    }
+};
+
+struct GameControllerInput {
+    bool is_connected = false;
+    bool is_analog = false;
+
+    f32 stick_average_x = 0.0f;
+    f32 stick_average_y = 0.0f;
+
+    union {
+        ButtonState buttons[12] = {};
+        struct {
+            ButtonState move_up;
+            ButtonState move_down;
+            ButtonState move_left;
+            ButtonState move_right;
+
+            ButtonState action_up;
+            ButtonState action_down;
+            ButtonState action_left;
+            ButtonState action_right;
+
+            ButtonState left_shoulder;
+            ButtonState right_shoulder;
+
+            ButtonState back;
+            ButtonState start;
+        };
+    };
+};
+
+struct GameInput {
+    SDL_Gamepad* gamepad = nullptr;
+    bool controller_connected = false;
+
+    f32 dt_for_frame = 0.0f;
+
+    union {
+        GameControllerInput controllers[5] = {};
+
+        struct {
+            GameControllerInput keyboard_input;
+            GameControllerInput controller_input0;
+            GameControllerInput controller_input1;
+            GameControllerInput controller_input2;
+            GameControllerInput controller_input3;
+        };
+    };
+};
+
+struct GameSound {
+    SDL_AudioStream* audio_stream = nullptr;
+    f32 tone_volume = 0.1;
+    f32 wave_period = 0.0;
+};
+
+struct Game {
+    SDL_Window* window = nullptr;
+    SDL_Renderer* renderer = nullptr;
+    SDL_Texture* texture = nullptr;
+    GameInput input = {};
+    GameSound sound = {};
+    i32 win_width = 1280;
+    i32 win_height = 720;
+    bool win_focused = true;
+    bool running = true;
+};
+
+struct GameState {
+    i32 blue_offset = 0;
+    i32 green_offset = 0;
+    f32 tone_hz = 440.0f;
+    u8 preset_tones_idx = 5; // 440.0f;
+};
+
+static Game game = {};
+
+fn resize_texture(i32 width, i32 height) -> bool {
+    if (game.texture) {
+        SDL_DestroyTexture(game.texture);
+        game.texture = nullptr;
     }
 
-    texture_width = width;
-    texture_height = height;
-
-    texture = SDL_CreateTexture(
-        renderer,
+    game.texture = SDL_CreateTexture(
+        game.renderer,
         SDL_PIXELFORMAT_BGRX32,
         SDL_TEXTUREACCESS_STREAMING,
-        texture_width,
-        texture_height
+        width,
+        height
     );
 
-    if (!texture) {
+    if (!game.texture) {
         SDL_Log("Your GPU is probably older than my grandmother's dentures.");
         return false;
     }
 
-    SDL_SetTextureScaleMode(texture, SDL_SCALEMODE_NEAREST);
+    SDL_SetTextureScaleMode(game.texture, SDL_SCALEMODE_NEAREST);
 
     return true;
 }
 
-static void render_weird_gradient(u32 blue_offset, u32 green_offset) {
-    if (!texture)
+fn render_weird_gradient(GameState* state) -> void {
+    if (!game.texture)
         return;
 
     void* pixels = nullptr;
     i32 pitch = 0;
 
-    if (!SDL_LockTexture(texture, nullptr, &pixels, &pitch)) {
+    if (!SDL_LockTexture(game.texture, nullptr, &pixels, &pitch)) {
         SDL_Log("You are a failure. %s", SDL_GetError());
+        return;
+    }
+
+    f32 texture_width, texture_height;
+    if (!SDL_GetTextureSize(game.texture, &texture_width, &texture_height)) {
+        SDL_UnlockTexture(game.texture);
         return;
     }
 
     u8* row = (u8*)pixels;
 
-    for (i32 y = 0; y < texture_height; ++y) {
+    for (i32 y = 0; y < (i32)texture_height; ++y) {
         u32* pixel = (u32*)row;
 
-        for (i32 x = 0; x < texture_width; ++x) {
-            u8 blue = (x + blue_offset);
-            u8 green = (y + green_offset);
+        for (i32 x = 0; x < (i32)texture_width; ++x) {
+            u8 blue = (x + state->blue_offset);
+            u8 green = (y + state->green_offset);
 
             *pixel++ = ((green << 8) | blue);
         }
@@ -79,192 +163,291 @@ static void render_weird_gradient(u32 blue_offset, u32 green_offset) {
         row += pitch;
     }
 
-    SDL_UnlockTexture(texture);
+    SDL_UnlockTexture(game.texture);
 }
 
-static void handle_keyboard_input() {
+fn handle_input(
+    GameInput* prev_input,
+    GameInput* curr_input,
+    [[maybe_unused]] GameState* state
+) -> void {
+    // Copy old input
+    *curr_input = *prev_input;
+
+    // Clear transition counts for new frame
+    for (i32 controller_index = 0; controller_index < 5; ++controller_index) {
+        GameControllerInput* controller =
+            &curr_input->controllers[controller_index];
+        for (i32 button_index = 0; button_index < 12; ++button_index) {
+            controller->buttons[button_index].half_transition_count = 0;
+        }
+    }
+
+    GameControllerInput* keyboard_input_prev = &prev_input->keyboard_input;
+    GameControllerInput* keyboard_input = &curr_input->keyboard_input;
+    keyboard_input->is_connected = true;
+    keyboard_input->is_analog = false;
+
     const bool* keyboard_state = SDL_GetKeyboardState(nullptr);
 
-    if (keyboard_state[SDL_SCANCODE_ESCAPE]) {
-        running = false;
-    }
+    keyboard_input->move_up.process_button_state(
+        &keyboard_input_prev->move_up,
+        keyboard_state[SDL_SCANCODE_W]
+    );
 
-    if (keyboard_state[SDL_SCANCODE_W]) {
-        tone_hz += 10.0f;
-        if (tone_hz > 2000.0f)
-            tone_hz = 2000.0f;
-    }
+    keyboard_input->move_down.process_button_state(
+        &keyboard_input_prev->move_down,
+        keyboard_state[SDL_SCANCODE_S]
+    );
 
-    if (keyboard_state[SDL_SCANCODE_A]) {
-    }
+    keyboard_input->move_left.process_button_state(
+        &keyboard_input_prev->move_left,
+        keyboard_state[SDL_SCANCODE_A]
+    );
 
-    if (keyboard_state[SDL_SCANCODE_S]) {
-        tone_hz -= 10.0f;
-        if (tone_hz < 100.0f)
-            tone_hz = 100.0f;
-    }
+    keyboard_input->move_right.process_button_state(
+        &keyboard_input_prev->move_right,
+        keyboard_state[SDL_SCANCODE_D]
+    );
 
-    if (keyboard_state[SDL_SCANCODE_D]) {
-    }
+    keyboard_input->action_up.process_button_state(
+        &keyboard_input_prev->action_up,
+        keyboard_state[SDL_SCANCODE_UP]
+    );
 
-    if (keyboard_state[SDL_SCANCODE_SPACE]) {
-    }
+    keyboard_input->action_down.process_button_state(
+        &keyboard_input_prev->action_down,
+        keyboard_state[SDL_SCANCODE_DOWN]
+    );
 
-    if (keyboard_state[SDL_SCANCODE_1]) {
-        tone_hz = 261.63f; // C4
-    }
+    keyboard_input->action_left.process_button_state(
+        &keyboard_input_prev->action_left,
+        keyboard_state[SDL_SCANCODE_LEFT]
+    );
 
-    if (keyboard_state[SDL_SCANCODE_2]) {
-        tone_hz = 293.66f; // D4
-    }
+    keyboard_input->action_right.process_button_state(
+        &keyboard_input_prev->action_right,
+        keyboard_state[SDL_SCANCODE_RIGHT]
+    );
 
-    if (keyboard_state[SDL_SCANCODE_3]) {
-        tone_hz = 329.63f; // E4
-    }
+    keyboard_input->start.process_button_state(
+        &keyboard_input_prev->start,
+        keyboard_state[SDL_SCANCODE_ESCAPE]
+    );
 
-    if (keyboard_state[SDL_SCANCODE_4]) {
-        tone_hz = 349.23f; // F4
-    }
+    keyboard_input->start.process_button_state(
+        &keyboard_input_prev->start,
+        keyboard_state[SDL_SCANCODE_ESCAPE]
+    );
 
-    if (keyboard_state[SDL_SCANCODE_5]) {
-        tone_hz = 392.00f; // G4
-    }
+    // TODO: Handle the other controllers
+    if (game.input.controller_connected && game.input.gamepad) {
+        GameControllerInput* gamepad_controller_prev =
+            &prev_input->controller_input0;
+        GameControllerInput* gamepad_controller =
+            &curr_input->controller_input0;
+        gamepad_controller->is_connected = true;
+        gamepad_controller->is_analog = true;
 
-    if (keyboard_state[SDL_SCANCODE_6]) {
-        tone_hz = 440.00f; // A4
-    }
+        gamepad_controller->move_up.process_button_state(
+            &gamepad_controller_prev->move_up,
+            SDL_GetGamepadButton(game.input.gamepad, SDL_GAMEPAD_BUTTON_DPAD_UP)
+        );
 
-    if (keyboard_state[SDL_SCANCODE_7]) {
-        tone_hz = 493.88f; // B4
-    }
+        gamepad_controller->move_down.process_button_state(
+            &gamepad_controller_prev->move_down,
+            SDL_GetGamepadButton(
+                game.input.gamepad,
+                SDL_GAMEPAD_BUTTON_DPAD_DOWN
+            )
+        );
 
-    if (keyboard_state[SDL_SCANCODE_M]) {
-        tone_volume = 0.0;
-    }
-    if (keyboard_state[SDL_SCANCODE_U]) {
-        tone_volume = 0.1;
+        gamepad_controller->move_left.process_button_state(
+            &gamepad_controller_prev->move_left,
+            SDL_GetGamepadButton(
+                game.input.gamepad,
+                SDL_GAMEPAD_BUTTON_DPAD_LEFT
+            )
+        );
+
+        gamepad_controller->move_right.process_button_state(
+            &gamepad_controller_prev->move_right,
+            SDL_GetGamepadButton(
+                game.input.gamepad,
+                SDL_GAMEPAD_BUTTON_DPAD_RIGHT
+            )
+        );
+
+        gamepad_controller->action_up.process_button_state(
+            &gamepad_controller_prev->action_up,
+            SDL_GetGamepadButton(game.input.gamepad, SDL_GAMEPAD_BUTTON_NORTH)
+        );
+
+        gamepad_controller->action_down.process_button_state(
+            &gamepad_controller_prev->action_down,
+            SDL_GetGamepadButton(game.input.gamepad, SDL_GAMEPAD_BUTTON_SOUTH)
+        );
+
+        gamepad_controller->action_left.process_button_state(
+            &gamepad_controller_prev->action_left,
+            SDL_GetGamepadButton(game.input.gamepad, SDL_GAMEPAD_BUTTON_WEST)
+        );
+
+        gamepad_controller->action_right.process_button_state(
+            &gamepad_controller_prev->action_right,
+            SDL_GetGamepadButton(game.input.gamepad, SDL_GAMEPAD_BUTTON_EAST)
+        );
+
+        gamepad_controller->left_shoulder.process_button_state(
+            &gamepad_controller_prev->left_shoulder,
+            SDL_GetGamepadButton(
+                game.input.gamepad,
+                SDL_GAMEPAD_BUTTON_LEFT_SHOULDER
+            )
+        );
+
+        gamepad_controller->right_shoulder.process_button_state(
+            &gamepad_controller_prev->right_shoulder,
+            SDL_GetGamepadButton(
+                game.input.gamepad,
+                SDL_GAMEPAD_BUTTON_RIGHT_SHOULDER
+            )
+        );
+
+        gamepad_controller->start.process_button_state(
+            &gamepad_controller_prev->start,
+            SDL_GetGamepadButton(game.input.gamepad, SDL_GAMEPAD_BUTTON_START)
+        );
+
+        i16 left_x =
+            SDL_GetGamepadAxis(game.input.gamepad, SDL_GAMEPAD_AXIS_LEFTX);
+        i16 left_y =
+            SDL_GetGamepadAxis(game.input.gamepad, SDL_GAMEPAD_AXIS_LEFTY);
+        [[maybe_unused]] i16 right_x =
+            SDL_GetGamepadAxis(game.input.gamepad, SDL_GAMEPAD_AXIS_RIGHTX);
+        [[maybe_unused]] i16 right_y =
+            SDL_GetGamepadAxis(game.input.gamepad, SDL_GAMEPAD_AXIS_RIGHTY);
+
+        if (abs(left_x) > DEADZONE || abs(left_y) > DEADZONE) {
+            gamepad_controller->stick_average_x = left_x / 32767.0f;
+            gamepad_controller->stick_average_y = left_y / 32767.0f;
+        } else {
+            gamepad_controller->stick_average_x = 0.0f;
+            gamepad_controller->stick_average_y = 0.0f;
+        }
     }
 }
 
-static void handle_controller_input() {
-    if (!controller_connected)
-        return;
+fn update(GameInput* input, GameState* state) -> void {
+    for (i32 controller_index = 0; controller_index < 5; ++controller_index) {
+        GameControllerInput* controller = &input->controllers[controller_index];
 
-    // Buttons (current state, not just pressed this frame)
-    if (SDL_GetGamepadButton(gamepad, SDL_GAMEPAD_BUTTON_SOUTH)) {
-        // SDL_Log("A button is being held down");
-    }
+        if (!controller->is_connected)
+            continue;
 
-    if (SDL_GetGamepadButton(gamepad, SDL_GAMEPAD_BUTTON_EAST)) {
-        // SDL_Log("B button is being held down");
-    }
+        f32 move_x = 0.0f;
+        f32 move_y = 0.0f;
 
-    if (SDL_GetGamepadButton(gamepad, SDL_GAMEPAD_BUTTON_START)) {
-        running = false;
-    }
+        if (controller->is_analog) {
+            move_x = controller->stick_average_x;
+            move_y = controller->stick_average_y;
+        }
 
-    // D-pad
-    if (SDL_GetGamepadButton(gamepad, SDL_GAMEPAD_BUTTON_DPAD_UP)) {
-        // SDL_Log("D-pad up");
-    }
+        if (controller->move_left.ended_down)
+            move_x = -1.0f;
+        if (controller->move_right.ended_down)
+            move_x = 1.0f;
+        if (controller->move_up.ended_down)
+            move_y = -1.0f;
+        if (controller->move_down.ended_down)
+            move_y = 1.0f;
 
-    if (SDL_GetGamepadButton(gamepad, SDL_GAMEPAD_BUTTON_DPAD_DOWN)) {
-        // SDL_Log("D-pad down");
-    }
+        state->blue_offset += (i32)(move_x * STEP_SIZE * 5.0f);
+        state->green_offset += (i32)(move_y * STEP_SIZE * 5.0f);
 
-    if (SDL_GetGamepadButton(gamepad, SDL_GAMEPAD_BUTTON_DPAD_LEFT)) {
-        // SDL_Log("D-pad left");
-    }
+        if (controller->action_up.ended_down) {
+            state->tone_hz += 10.0f;
+            if (state->tone_hz > 2000.0f)
+                state->tone_hz = 2000.0f;
+        }
 
-    if (SDL_GetGamepadButton(gamepad, SDL_GAMEPAD_BUTTON_DPAD_RIGHT)) {
-        // SDL_Log("D-pad right");
-    }
+        if (controller->action_down.ended_down) {
+            state->tone_hz -= 10.0f;
+            if (state->tone_hz < 100.0f)
+                state->tone_hz = 100.0f;
+        }
 
-    // Shoulder buttons
-    if (SDL_GetGamepadButton(gamepad, SDL_GAMEPAD_BUTTON_LEFT_SHOULDER)) {
-        // SDL_Log("Left bumper");
-    }
+        if (controller->start.was_pressed()) {
+            game.running = false;
+        }
 
-    if (SDL_GetGamepadButton(gamepad, SDL_GAMEPAD_BUTTON_RIGHT_SHOULDER)) {
-        // SDL_Log("Right bumper");
-    }
+        if (controller->action_right.was_pressed()) {
+            if (state->preset_tones_idx + 1 >= TONES_LEN) {
+                state->preset_tones_idx = 0;
+            } else {
+                state->preset_tones_idx += 1;
+            }
 
-    // Left stick
-    i16 left_x = SDL_GetGamepadAxis(gamepad, SDL_GAMEPAD_AXIS_LEFTX);
-    i16 left_y = SDL_GetGamepadAxis(gamepad, SDL_GAMEPAD_AXIS_LEFTY);
+            state->tone_hz = TONES[state->preset_tones_idx];
+        }
 
-    if (abs(left_x) > DEADZONE || abs(left_y) > DEADZONE) {
-        f32 norm_left_x = left_x / 32767.0f;
-        f32 norm_left_y = left_y / 32767.0f;
+        if (controller->action_left.was_pressed()) {
+            if (state->preset_tones_idx == 0) {
+                state->preset_tones_idx = TONES_LEN - 1;
+            } else {
+                state->preset_tones_idx -= 1;
+            }
 
-        // Use normalized values for player movement, camera, etc.
-        SDL_Log("Left stick: (%.2f, %.2f)", norm_left_x, norm_left_y);
-    }
+            state->tone_hz = TONES[state->preset_tones_idx];
+        }
 
-    // Right stick
-    i16 right_x = SDL_GetGamepadAxis(gamepad, SDL_GAMEPAD_AXIS_RIGHTX);
-    i16 right_y = SDL_GetGamepadAxis(gamepad, SDL_GAMEPAD_AXIS_RIGHTY);
+        const bool* keyboard_state = SDL_GetKeyboardState(nullptr);
+        if (keyboard_state[SDL_SCANCODE_M]) {
+            game.sound.tone_volume = 0.0;
+        }
 
-    if (abs(right_x) > DEADZONE || abs(right_y) > DEADZONE) {
-        f32 norm_right_x = right_x / 32767.0f;
-        f32 norm_right_y = right_y / 32767.0f;
-
-        // Use for camera control, aiming, etc.
-        SDL_Log("Right stick: (%.2f, %.2f)", norm_right_x, norm_right_y);
-    }
-
-    // Triggers (0 to 32767)
-    i16 left_trigger =
-        SDL_GetGamepadAxis(gamepad, SDL_GAMEPAD_AXIS_LEFT_TRIGGER);
-    i16 right_trigger =
-        SDL_GetGamepadAxis(gamepad, SDL_GAMEPAD_AXIS_RIGHT_TRIGGER);
-
-    if (left_trigger > TRIGGER_THRESHOLD) {
-        [[maybe_unused]] f32 norm_left_trigger = left_trigger / 32767.0f;
-        // Use for analog actions like acceleration, zoom, etc.
-    }
-
-    if (right_trigger > TRIGGER_THRESHOLD) {
-        [[maybe_unused]] f32 norm_right_trigger = right_trigger / 32767.0f;
-        // Use for analog actions
+        if (keyboard_state[SDL_SCANCODE_U]) {
+            game.sound.tone_volume = 0.1;
+        }
     }
 }
 
-static void handle_window_events() {
+fn handle_window_events([[maybe_unused]] GameState* state) -> void {
     SDL_Event event;
 
     while (SDL_PollEvent(&event)) {
         switch (event.type) {
             case SDL_EVENT_QUIT: {
-                running = false;
+                game.running = false;
                 break;
             }
 
             case SDL_EVENT_WINDOW_RESIZED: {
-                win_width = event.window.data1;
-                win_height = event.window.data2;
+                game.win_width = event.window.data1;
+                game.win_height = event.window.data2;
 
-                resize_texture(win_width, win_height);
+                resize_texture(game.win_width, game.win_height);
 
                 break;
             }
 
             case SDL_EVENT_WINDOW_FOCUS_LOST: {
-                win_focused = false;
+                game.win_focused = false;
                 break;
             }
 
             case SDL_EVENT_WINDOW_FOCUS_GAINED: {
-                win_focused = true;
+                game.win_focused = true;
                 break;
             }
 
             case SDL_EVENT_GAMEPAD_ADDED: {
-                if (!controller_connected) {
-                    gamepad = SDL_OpenGamepad(event.gdevice.which);
-                    if (gamepad) {
-                        controller_connected = true;
-                        const char* name = SDL_GetGamepadName(gamepad);
+                if (!game.input.controller_connected) {
+                    game.input.gamepad = SDL_OpenGamepad(event.gdevice.which);
+                    if (game.input.gamepad) {
+                        game.input.controller_connected = true;
+                        const char* name =
+                            SDL_GetGamepadName(game.input.gamepad);
                         SDL_Log(
                             "Controller connected: %s",
                             name ? name : "Unknown"
@@ -275,11 +458,12 @@ static void handle_window_events() {
             }
 
             case SDL_EVENT_GAMEPAD_REMOVED: {
-                if (gamepad &&
-                    event.gdevice.which == SDL_GetGamepadID(gamepad)) {
-                    SDL_CloseGamepad(gamepad);
-                    gamepad = nullptr;
-                    controller_connected = false;
+                if (game.input.gamepad &&
+                    event.gdevice.which ==
+                        SDL_GetGamepadID(game.input.gamepad)) {
+                    SDL_CloseGamepad(game.input.gamepad);
+                    game.input.gamepad = nullptr;
+                    game.input.controller_connected = false;
                     SDL_Log("Controller disconnected");
                 }
                 break;
@@ -288,75 +472,73 @@ static void handle_window_events() {
     }
 }
 
-static void handle_audio_stream() {
-    if (!audio_stream)
+fn handle_audio_stream(GameState* state) -> void {
+    if (!game.sound.audio_stream)
         return;
 
     // Target ~100 ms of queued audio to avoid underruns.
     constexpr f32 TARGET_SECONDS = 0.10;
-    i32 target_bytes = (i32)(SAMPLE_RATE * sizeof(f32) * TARGET_SECONDS);
+    constexpr usize SAMPLE_COUNT = 512;
 
-    static f32 samples[512];
-    u32 sample_count = SDL_arraysize(samples);
+    f32 samples[SAMPLE_COUNT];
+    i32 target_bytes = (i32)(SAMPLE_RATE * sizeof(f32) * TARGET_SECONDS);
 
     // See if we need to feed the audio stream more data yet.
     // We're being lazy here, but if there's less than half a second queued,
     // generate more. A sine wave is unchanging audio--easy to stream--but for
     // video games, you'll want to generate significantly _less_ audio ahead of
     // time!
-    if (SDL_GetAudioStreamQueued(audio_stream) < target_bytes) {
+    if (SDL_GetAudioStreamQueued(game.sound.audio_stream) < target_bytes) {
         // Generate a 440hz pure tone
-        for (u32 i = 0; i < sample_count; i++) {
-            f32 sine_value = SDL_sinf(wave_period * 2.0f * SDL_PI_F);
-            samples[i] = sine_value * tone_volume;
+        for (u32 i = 0; i < SAMPLE_COUNT; i++) {
+            f32 sine_value = SDL_sinf(game.sound.wave_period * 2.0f * SDL_PI_F);
+            samples[i] = sine_value * game.sound.tone_volume;
 
             // Advance the wave period by the frequency step
             // This is the key insight from Casey's explanation:
             // Each sample advances the phase by (frequency / sample_rate)
-            wave_period += tone_hz / SAMPLE_RATE;
+            game.sound.wave_period += state->tone_hz / SAMPLE_RATE;
 
             // Keep wave_period in a reasonable range to avoid floating point
             // errors Since sine is periodic, we can wrap around at 1.0
-            if (wave_period >= 1.0f) {
-                wave_period -= 1.0f;
+            if (game.sound.wave_period >= 1.0f) {
+                game.sound.wave_period -= 1.0f;
             }
         }
 
-        SDL_PutAudioStreamData(audio_stream, samples, sizeof(samples));
+        SDL_PutAudioStreamData(
+            game.sound.audio_stream,
+            samples,
+            sizeof(samples)
+        );
     }
 }
 
-static void render() {
-    if (!win_focused)
+fn render(GameState* state) -> void {
+    if (!game.win_focused)
         return;
 
-    static u32 blue_offset = 0;
-    static u32 green_offset = 0;
+    render_weird_gradient(state);
 
-    blue_offset += 1;
-    green_offset += 1;
-
-    render_weird_gradient(blue_offset, green_offset);
-
-    SDL_SetRenderDrawColor(renderer, 0, 0, 0, 255);
-    SDL_RenderClear(renderer);
-    if (texture) {
-        SDL_RenderTexture(renderer, texture, nullptr, nullptr);
+    SDL_SetRenderDrawColor(game.renderer, 0, 0, 0, 255);
+    SDL_RenderClear(game.renderer);
+    if (game.texture) {
+        SDL_RenderTexture(game.renderer, game.texture, nullptr, nullptr);
     }
-    SDL_RenderPresent(renderer);
+    SDL_RenderPresent(game.renderer);
 }
 
-static void initialize_gamepad() {
+fn initialize_gamepad() -> void {
     i32 n_joysticks;
     SDL_JoystickID* joysticks = SDL_GetJoysticks(&n_joysticks);
 
     if (n_joysticks > 0) {
         for (i32 i = 0; i < n_joysticks; i++) {
             if (SDL_IsGamepad(joysticks[i])) {
-                gamepad = SDL_OpenGamepad(joysticks[i]);
-                if (gamepad) {
-                    controller_connected = true;
-                    const char* name = SDL_GetGamepadName(gamepad);
+                game.input.gamepad = SDL_OpenGamepad(joysticks[i]);
+                if (game.input.gamepad) {
+                    game.input.controller_connected = true;
+                    const char* name = SDL_GetGamepadName(game.input.gamepad);
                     SDL_Log(
                         "Controller connected: %s",
                         name ? name : "Unknown"
@@ -368,34 +550,34 @@ static void initialize_gamepad() {
         SDL_free(joysticks);
     }
 
-    if (!controller_connected) {
+    if (!game.input.controller_connected) {
         SDL_Log("No controller detected");
     }
 }
 
-static bool initialize_audio() {
+fn initialize_audio() -> bool {
     SDL_AudioSpec spec = {};
     spec.format = SDL_AUDIO_F32;
     spec.channels = 1;
     spec.freq = SAMPLE_RATE;
 
-    audio_stream = SDL_OpenAudioDeviceStream(
+    game.sound.audio_stream = SDL_OpenAudioDeviceStream(
         SDL_AUDIO_DEVICE_DEFAULT_PLAYBACK,
         &spec,
         nullptr,
         nullptr
     );
-    if (!audio_stream) {
+    if (!game.sound.audio_stream) {
         SDL_Log("You will die in misery");
         return false;
     }
 
-    SDL_ResumeAudioStreamDevice(audio_stream);
+    SDL_ResumeAudioStreamDevice(game.sound.audio_stream);
 
     return true;
 }
 
-static bool initialize() {
+fn initialize() -> bool {
     if (!SDL_Init(SDL_INIT_VIDEO | SDL_INIT_AUDIO | SDL_INIT_GAMEPAD)) {
         SDL_Log("You've failed as a human being.");
         return false;
@@ -403,19 +585,23 @@ static bool initialize() {
 
     SDL_CreateWindowAndRenderer(
         "Handmade hero SDL3",
-        win_width,
-        win_height,
-        SDL_WINDOW_RESIZABLE,
-        &window,
-        &renderer
+        game.win_width,
+        game.win_height,
+        0,
+        &game.window,
+        &game.renderer
     );
 
-    if (!window || !renderer) {
+    if (!game.window || !game.renderer) {
         SDL_Log("Maybe you should buy a new computer.");
         return false;
     }
 
-    if (!resize_texture(win_width, win_height)) {
+    if (!SDL_SetRenderVSync(game.renderer, 1)) {
+        SDL_Log("Warning: Unable to enable VSync: %s", SDL_GetError());
+    }
+
+    if (!resize_texture(game.win_width, game.win_height)) {
         return false;
     }
 
@@ -425,65 +611,57 @@ static bool initialize() {
     return true;
 }
 
-static void shutdown() {
-    SDL_Log("Running shutdown logic");
-
-    if (audio_stream) {
-        SDL_DestroyAudioStream(audio_stream);
+fn shutdown() -> void {
+    if (game.sound.audio_stream) {
+        SDL_DestroyAudioStream(game.sound.audio_stream);
     }
-    if (gamepad) {
-        SDL_CloseGamepad(gamepad);
+    if (game.input.gamepad) {
+        SDL_CloseGamepad(game.input.gamepad);
     }
-    if (texture) {
-        SDL_DestroyTexture(texture);
+    if (game.texture) {
+        SDL_DestroyTexture(game.texture);
     }
-    if (window) {
-        SDL_DestroyWindow(window);
+    if (game.window) {
+        SDL_DestroyWindow(game.window);
     }
-    if (renderer) {
-        SDL_DestroyRenderer(renderer);
+    if (game.renderer) {
+        SDL_DestroyRenderer(game.renderer);
     }
 
     SDL_Quit();
 }
 
 int main([[maybe_unused]] int argc, [[maybe_unused]] char* argv[]) {
-    if (!initialize()) {
+    if (!initialize())
         return -1;
-    }
-
     defer { shutdown(); };
 
-    while (running) {
+    var persistent_storage = FixedBufferAllocator::create(MB(64));
+    defer { persistent_storage.destroy(); };
+
+    var transient_storage = FixedBufferAllocator::create(MB(64));
+    defer { transient_storage.destroy(); };
+
+    var state = persistent_storage.alloc_initialized<GameState>();
+
+    var prev_input = transient_storage.alloc_initialized<GameInput>();
+    var curr_input = transient_storage.alloc_initialized<GameInput>();
+
+    while (game.running) {
         u64 frame_start_ns = SDL_GetTicksNS();
 
-        handle_window_events();
-        handle_keyboard_input();
-        handle_controller_input();
-        handle_audio_stream();
-        render();
+        handle_window_events(state);
+        handle_input(prev_input, curr_input, state);
+        update(curr_input, state);
+        handle_audio_stream(state);
+        render(state);
+
+        GameInput* temp = prev_input;
+        prev_input = curr_input;
+        curr_input = temp;
 
         u64 frame_end_ns = SDL_GetTicksNS();
-        u64 frame_ns = frame_end_ns - frame_start_ns;
-        static u64 acc_ns = 0;
-        static u32 acc_frames = 0;
-        acc_ns += frame_ns;
-        acc_frames++;
-
-        if (acc_ns >= 1'000'000'000ULL) {
-            f32 avg_ms = (f32)acc_ns / acc_frames / 1'000'000.0f;
-            f32 avg_fps = (f32)acc_frames * 1'000'000'000.0f / (f32)acc_ns;
-
-            SDL_Log(
-                "Avg over %u frames: %.2f ms (%.2f FPS)",
-                acc_frames,
-                avg_ms,
-                avg_fps
-            );
-
-            acc_ns = 0;
-            acc_frames = 0;
-        }
+        [[maybe_unused]] u64 frame_ns = frame_end_ns - frame_start_ns;
     }
 
     return 0;

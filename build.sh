@@ -20,7 +20,10 @@ clang++ -std=c++23 \
     -Wextra \
     -Wpedantic \
     -Wno-c23-extensions \
+    -Wno-gnu-anonymous-struct \
+    -Wno-nested-anon-types \
     -Wno-language-extension-token \
+    -Wno-keyword-macro \
     $(pkg-config --cflags sdl3 2>/dev/null) \
     -o "$BUILD_DIR/main" \
     "$SRC_DIR/main.cpp" \
