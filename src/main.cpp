@@ -2,6 +2,7 @@
 #include <SDL3/SDL.h>
 #include <SDL3/SDL_main.h>
 
+constexpr f32 STEP_SIZE = 1.0f;
 constexpr f32 SAMPLE_RATE = 48000.0;
 constexpr i16 TRIGGER_THRESHOLD = 4000;
 constexpr i16 DEADZONE = 8000;
@@ -104,19 +105,29 @@ void handle_keyboard_input(GameState* state) {
     }
 
     if (keyboard_state[SDL_SCANCODE_W]) {
+        state->green_offset -= STEP_SIZE * 5.0f;
+    }
+
+    if (keyboard_state[SDL_SCANCODE_S]) {
+        state->green_offset += STEP_SIZE * 5.0f;
+    }
+
+    if (keyboard_state[SDL_SCANCODE_A]) {
+        state->blue_offset -= STEP_SIZE * 5.0f;
+    }
+
+    if (keyboard_state[SDL_SCANCODE_D]) {
+        state->blue_offset += STEP_SIZE * 5.0f;
+    }
+
+    if (keyboard_state[SDL_SCANCODE_UP]) {
         state->tone_hz += 10.0f;
         if (state->tone_hz > 2000.0f) state->tone_hz = 2000.0f;
     }
 
-    if (keyboard_state[SDL_SCANCODE_A]) {
-    }
-
-    if (keyboard_state[SDL_SCANCODE_S]) {
+    if (keyboard_state[SDL_SCANCODE_DOWN]) {
         state->tone_hz -= 10.0f;
         if (state->tone_hz < 100.0f) state->tone_hz = 100.0f;
-    }
-
-    if (keyboard_state[SDL_SCANCODE_D]) {
     }
 
     if (keyboard_state[SDL_SCANCODE_SPACE]) {
@@ -440,7 +451,7 @@ bool initialize() {
         "Handmade hero SDL3",
         game.win_width,
         game.win_height,
-        SDL_WINDOW_RESIZABLE,
+        0,
         &game.window,
         &game.renderer
     );
@@ -465,8 +476,6 @@ bool initialize() {
 }
 
 void shutdown() {
-    SDL_Log("Running shutdown logic");
-
     if (game.sound.audio_stream) {
         SDL_DestroyAudioStream(game.sound.audio_stream);
     }
