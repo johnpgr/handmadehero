@@ -13,10 +13,6 @@ set SDL3_BUILD_DIR=%SDL3_DIR%\build
 set SDL3_INCLUDE_DIR=%SDL3_DIR%\include
 set SDL3_LIB_DIR=%SDL3_BUILD_DIR%
 
-:: Set GLAD paths
-set GLAD_DIR=%THIRDPARTY_DIR%\GLAD
-set GLAD_INCLUDE_DIR=%GLAD_DIR%\include
-set GLAD_SRC_DIR=%GLAD_DIR%\src
 
 :: Create build directory if it doesn't exist
 if not exist "%BUILD_DIR%" mkdir "%BUILD_DIR%"
@@ -57,20 +53,6 @@ if not exist "%SDL3_LIB_DIR%\RelWithDebInfo\SDL3.lib" (
     echo SDL3 built successfully
 )
 
-:: Compile GLAD as C first
-if not exist "%BUILD_DIR%\glad.o" (
-    echo Compiling GLAD...
-    clang -c -I"%GLAD_INCLUDE_DIR%" ^
-        -o "%BUILD_DIR%\glad.o" ^
-        "%GLAD_SRC_DIR%\glad.c" ^
-        -MD
-
-    if errorlevel 1 (
-        echo GLAD compilation failed
-        exit /b 1
-    )
-)
-
 :: Compile the application
 echo Compiling application...
 
@@ -80,13 +62,14 @@ clang++ -std=c++23 ^
     -Wextra ^
     -Wpedantic ^
     -Wno-c23-extensions ^
+    -Wno-gnu-anonymous-struct ^
+    -Wno-nested-anon-types ^
     -Wno-language-extension-token ^
-    -I"%GLAD_INCLUDE_DIR%" ^
+    -Wno-keyword-macro ^
     -I"%SDL3_INCLUDE_DIR%" ^
     -L"%SDL3_LIB_DIR%\RelWithDebInfo" ^
     -o "%BUILD_DIR%\main.exe" ^
     "%SRC_DIR%\main.cpp" ^
-    "%BUILD_DIR%\glad.o" ^
     -Wl,/SUBSYSTEM:WINDOWS ^
     -lSDL3 ^
     -lopengl32 ^

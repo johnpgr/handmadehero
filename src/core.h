@@ -1,14 +1,11 @@
 #pragma once
 
-#include "SDL3/SDL_assert.h"
-#include "SDL3/SDL_error.h"
-#include "SDL3/SDL_iostream.h"
-#include "SDL3/SDL_log.h"
+#include <SDL3/SDL.h>
+#include <SDL3/SDL_main.h>
 #include <cassert>
 #include <expected>
 #include <utility>
 
-// Useful typedefs
 typedef uint8_t u8;
 typedef uint16_t u16;
 typedef uint32_t u32;
@@ -21,7 +18,14 @@ typedef float f32;
 typedef double f64;
 typedef size_t usize;
 
-// Useful macros
+#define fn auto
+#define let auto
+#ifdef __cplusplus
+#define export extern "C"
+#else
+#define export extern
+#endif
+
 #define BIT(x) 1 << (x)
 #define KB(x) ((usize)1024 * x)
 #define MB(x) ((usize)1024 * KB(x))
@@ -73,7 +77,7 @@ struct FixedBufferAllocator {
         SDL_free(memory);
     }
 
-    template <typename T> T* alloc(usize count = 1) {
+    template <typename T> fn alloc(usize count = 1) -> T* {
         usize size = sizeof(T) * count;
 
         usize alignment = alignof(T);
@@ -92,7 +96,7 @@ struct FixedBufferAllocator {
     }
 
     template <typename T, typename... Args>
-    T* alloc_initialized(Args&&... args) {
+    fn alloc_initialized(Args&&... args) -> T* {
         T* ptr = alloc<T>();
 
         if (ptr) {
@@ -102,7 +106,7 @@ struct FixedBufferAllocator {
         return ptr;
     }
 
-    void* alloc_bytes(usize size, usize alignment = sizeof(void*)) {
+    auto alloc_bytes(usize size, usize alignment = sizeof(void*)) -> void* {
         usize aligned_used = (used + alignment - 1) & ~(alignment - 1);
 
         if (aligned_used + size > capacity) {
@@ -131,8 +135,9 @@ enum FileError {
     ReadFailed
 };
 
-static std::expected<File, FileError>
-read_entire_file(const char* filename, FixedBufferAllocator* allocator) {
+[[maybe_unused]]
+fn read_entire_file(const char* filename, FixedBufferAllocator* allocator)
+    -> std::expected<File, FileError> {
     SDL_IOStream* file = SDL_IOFromFile(filename, "rb");
     if (!file) {
         SDL_Log("Failed to open file %s: %s", filename, SDL_GetError());
@@ -164,7 +169,8 @@ read_entire_file(const char* filename, FixedBufferAllocator* allocator) {
     };
 }
 
-static bool write_file(const char* filename, const void* data, size_t size) {
+[[maybe_unused]]
+fn write_file(const char* filename, const void* data, size_t size) -> bool {
     SDL_IOStream* file = SDL_IOFromFile(filename, "wb");
     if (!file) {
         SDL_Log("Failed to create file %s: %s", filename, SDL_GetError());

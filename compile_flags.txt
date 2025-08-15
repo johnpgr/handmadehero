@@ -1,8 +1,10 @@
 -std=c++23
--Ithirdparty/GLAD/include
 -Ithirdparty/SDL3/include
 -Wall
 -Wextra
 -Wpedantic
 -Wno-c23-extensions
+-Wno-gnu-anonymous-struct
+-Wno-nested-anon-types
 -Wno-language-extension-token 
+-Wno-keyword-macro
